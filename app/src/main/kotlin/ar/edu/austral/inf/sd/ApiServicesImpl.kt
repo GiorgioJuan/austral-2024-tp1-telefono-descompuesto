@@ -31,7 +31,7 @@ class ApiServicesImpl: RegisterNodeApiService, RelayApiService, PlayApiService {
     private val nodes: MutableList<RegisterResponse> = mutableListOf()
     private var nextNode: RegisterResponse? = null
     private val messageDigest = MessageDigest.getInstance("SHA-512")
-    private val salt = newSalt()
+    private var salt = newSalt()
     private val currentRequest
         get() = (RequestContextHolder.getRequestAttributes() as ServletRequestAttributes).request
     private var resultReady = CountDownLatch(1)
@@ -48,10 +48,11 @@ class ApiServicesImpl: RegisterNodeApiService, RelayApiService, PlayApiService {
             nodes.last()
         }
         val uuid = UUID.randomUUID().toString()
-        val node = RegisterResponse(host!!, port!!, uuid, newSalt())
+        val salt = newSalt()
+        val node = RegisterResponse(host!!, port!!, uuid, salt)
         nodes.add(node)
 
-        return RegisterResponse(nextNode.nextHost, nextNode.nextPort, uuid, newSalt())
+        return RegisterResponse(nextNode.nextHost, nextNode.nextPort, uuid, salt)
     }
 
     override fun relayMessage(message: String, signatures: Signatures): Signature {
@@ -107,7 +108,7 @@ class ApiServicesImpl: RegisterNodeApiService, RelayApiService, PlayApiService {
 
     internal fun registerToServer(registerHost: String, registerPort: Int) {
         val webClient = WebClient.create("http://$registerHost:$registerPort")
-        val response = webClient.post()
+        val response: RegisterResponse = webClient.post()
             .uri("/register-node?host=localhost&port=$myServerPort&name=$myServerName")
             .retrieve()
             .bodyToMono(RegisterResponse::class.java)
@@ -115,13 +116,14 @@ class ApiServicesImpl: RegisterNodeApiService, RelayApiService, PlayApiService {
 
         println("nextNode = $response")
         nextNode = response
+        salt = response.hash
     }
 
     private fun sendRelayMessage(body: String, contentType: String, relayNode: RegisterResponse, signatures: Signatures) {
         val webClient = WebClient.create("http://${relayNode.nextHost}:${relayNode.nextPort}")
         val relayRequest = MultipartBodyBuilder().apply {
-            part("message", body)
-            part("signatures", signatures)
+            part("message", body, MediaType.parseMediaType(contentType))
+            part("signatures", signatures, MediaType.parseMediaType("application/json"))
         }.build()
 
         val response = webClient.post()
